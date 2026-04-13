@@ -166,6 +166,7 @@ main(void)
     }
     if(fork1() == 0)
       runcmd(parsecmd(buf));
+    //主线程wait
     wait(0);
   }
   exit(0);
