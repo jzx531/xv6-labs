@@ -152,6 +152,7 @@ UPROGS=\
 	$U/_zombie\
 	$U/_sleep\
 	$U/_hello\
+	$U/_pingpong\
 
 
 ifeq ($(LAB),syscall)

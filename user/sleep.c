@@ -15,6 +15,6 @@ int main(int argc, char *argv[]) {
         exit(1);
     }
     n = atoi(argv[1]);
-    sleep(n );
+    sleep(n * 10 );
     exit(0);
 }
