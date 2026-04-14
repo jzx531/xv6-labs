@@ -18,6 +18,10 @@ sudo apt-get remove qemu-system-riscv64
 ```bash
  sudo apt-get install qemu-system-misc=1:4.2-3ubuntu6
 ```
+固定版本
+```bash
+sudo apt-mark hold qemu-system-misc
+```
 
 如果apt不支持对应的旧版
 添加对旧版包的依赖
