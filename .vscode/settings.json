@@ -4,6 +4,8 @@
         "user.h": "c",
         "param.h": "c",
         "memlayout.h": "c",
-        "fcntl.h": "c"
+        "fcntl.h": "c",
+        "stat.h": "c",
+        "fs.h": "c"
     }
 }
