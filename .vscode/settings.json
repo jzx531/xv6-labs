@@ -2,6 +2,8 @@
     "files.associations": {
         "types.h": "c",
         "user.h": "c",
-        "param.h": "c"
+        "param.h": "c",
+        "memlayout.h": "c",
+        "fcntl.h": "c"
     }
 }
