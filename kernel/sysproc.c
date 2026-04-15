@@ -6,36 +6,6 @@
 #include "memlayout.h"
 #include "spinlock.h"
 #include "proc.h"
-#include "sysinfo.h"
-
-extern void procNum(uint64 *procnum);
-extern void GetFreeBytes(uint64 *freemem);
-
-uint64
-sys_sysinfo(void)
-{
-  struct sysinfo si;
-  GetFreeBytes(&si.freemem);
-  procNum(&si.nproc);
-
-  uint64 st; // user pointer to struct stat
-  //获取用户虚拟地址
-  if( argaddr(0, &st) < 0)
-    return -1;
-  //将内核数据搬移到用户空间,使用copyout
-  struct proc *p = myproc();
-  if(copyout(p->pagetable, st, (char *)&si, sizeof(si)) < 0)
-    return -1;
-
-  return 0;
-}
-
-uint64
-sys_trace(void)
-{
-  argint(0,&(myproc()->trace_mask));
-  return 0;
-}
 
 uint64
 sys_exit(void)

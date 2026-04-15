@@ -107,31 +107,11 @@ sys_close(void)
 uint64
 sys_fstat(void)
 {
-  struct file *f;   // 内核中的文件结构指针
-  uint64 st;        // 用户空间中的 struct stat* 地址（用户虚拟地址）
+  struct file *f;
+  uint64 st; // user pointer to struct stat
 
-  /*
-   * argfd(0, 0, &f)
-   *   - 从系统调用参数中取第 0 个参数（文件描述符 fd）
-   *   - 找到对应的 struct file*
-   *   - 存入 f
-   *
-   * argaddr(1, &st)
-   *   - 从系统调用参数中取第 1 个参数（用户传入的指针）
-   *   - 该参数应该是 struct stat* 类型
-   *   - 存入 st（一个用户虚拟地址）
-   *
-   * 如果任何一步失败，返回 -1
-   * 两个函数的第一个参数是对应从系统中获取的第i个参数
-   */
   if(argfd(0, 0, &f) < 0 || argaddr(1, &st) < 0)
     return -1;
-
-  /*
-   * filestat:
-   *   - 从文件 f 中获取信息
-   *   - 并通过 copyout 写入用户空间地址 st
-   */
   return filestat(f, st);
 }
 
