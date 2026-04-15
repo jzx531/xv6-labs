@@ -107,7 +107,7 @@ extern uint64 sys_uptime(void);
 extern uint64 sys_trace(void);
 
 static uint64 (*syscalls[])(void) = {
-[SYS_fork]    sys_fork,
+[SYS_fork]    sys_fork,   //等价于: syscalls[SYS_fork] = sys_fork;
 [SYS_exit]    sys_exit,
 [SYS_wait]    sys_wait,
 [SYS_pipe]    sys_pipe,
