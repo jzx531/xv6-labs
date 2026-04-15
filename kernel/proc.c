@@ -291,6 +291,9 @@ fork(void)
 
   safestrcpy(np->name, p->name, sizeof(p->name));
 
+  //将子进程的trace_mask设置为父进程的trace_mask
+  np->trace_mask = p->trace_mask;
+
   pid = np->pid;
 
   np->state = RUNNABLE;
