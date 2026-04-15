@@ -97,12 +97,6 @@ runcmd(struct cmd *cmd)
     runcmd(lcmd->right);
     break;
 
-    /*Xv6 shell以类似于上面代码(user/sh.c:100)的方式实现了诸如grep fork sh.c | wc -l之类的管道。
-    子进程创建一个管道将管道的左端和右端连接起来。
-    然后对管道的左端调用fork和runcmd，对管道的右端调用fork和runcmd，并等待两者都完成。
-    管道的右端可能是一个命令，该命令本身包含一个管道(例如，a | b | c)，该管道本身fork为两个新的子进程(一个用于b，一个用于c)。
-    因此，shell可以创建一个进程树。
-    这个树的叶子是命令，内部节点是等待左右两个子进程完成的进程。*/
   case PIPE:
     pcmd = (struct pipecmd*)cmd;
     if(pipe(p) < 0)
@@ -162,7 +156,6 @@ main(void)
   }
 
   // Read and run input commands.
-  //cd需要单独处理，因为如果fork使用cd只是将子进程改变文件目录，主线程不更改
   while(getcmd(buf, sizeof(buf)) >= 0){
     if(buf[0] == 'c' && buf[1] == 'd' && buf[2] == ' '){
       // Chdir must be called by the parent, not the child.
@@ -173,7 +166,6 @@ main(void)
     }
     if(fork1() == 0)
       runcmd(parsecmd(buf));
-    //主线程wait
     wait(0);
   }
   exit(0);
