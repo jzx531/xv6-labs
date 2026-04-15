@@ -82,11 +82,14 @@ kalloc(void)
 void GetFreeBytes(uint64 * freebytes)
 {
   *freebytes = 0;
-  
-}
 
-void GetFreeBytes(uint64 * freebytes)
-{
-  *freebytes = 0;
+  struct run *p = kmem.freelist;
+  acquire(&kmem.lock);
+  while(p != 0)
+  {
+    *freebytes += PGSIZE;
+    p = p->next;
+  }
+  release(&kmem.lock);
 
 }

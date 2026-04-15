@@ -88,6 +88,8 @@ testcall() {
     printf("FAIL: sysinfo succeeded with bad argument\n");
     exit(1);
   }
+
+  printf("sysinfotest: OK, freebytes = %d, nproc = %d\n", info.freemem,info.nproc);
 }
 
 void testproc() {
