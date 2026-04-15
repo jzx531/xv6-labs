@@ -668,12 +668,13 @@ either_copyin(void *dst, int user_src, uint64 src, uint64 len)
   }
 }
 
-// Print a process listing to console.  For debugging.
-// Runs when user types ^P on console.
-// No lock to avoid wedging a stuck machine further.
+// 打印进程列表到控制台，用于调试。
+// 当用户在控制台上按^P时运行。
+// 不应用锁以避免卡住一个已经卡死的机器。
 void
 procdump(void)
 {
+  // 进程状态字符串映射表
   static char *states[] = {
   [UNUSED]    "unused",
   [SLEEPING]  "sleep ",
@@ -685,14 +686,35 @@ procdump(void)
   char *state;
 
   printf("\n");
+  // 遍历所有进程表项
   for(p = proc; p < &proc[NPROC]; p++){
+    // 跳过未使用的进程槽
     if(p->state == UNUSED)
       continue;
+    // 获取进程状态对应的字符串
     if(p->state >= 0 && p->state < NELEM(states) && states[p->state])
       state = states[p->state];
     else
-      state = "???";
+      state = "???";  // 状态无效时显示???
+    // 打印进程ID、状态和进程名
     printf("%d %s %s", p->pid, state, p->name);
     printf("\n");
+  }
+}
+
+void procNum(uint64 *procnum)
+{
+  // 遍历所有进程表项
+  *procnum = 0;
+  struct proc * p;
+  for(p = proc; p < &proc[NPROC]; p++){
+    // 跳过未使用的进程槽
+    if(p->state == UNUSED)
+      continue;
+    // 获取进程状态对应的字符串
+    // if(p->state >= 0 && p->state < NELEM(states) && states[p->state])
+    
+    *procnum = *procnum + 1;
+    
   }
 }

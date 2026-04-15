@@ -82,23 +82,27 @@ fileclose(struct file *f)
   }
 }
 
-// Get metadata about file f.
-// addr is a user virtual address, pointing to a struct stat.
+// 获取文件f的元数据。
+// addr是用户虚拟地址，指向struct stat结构体。
+// 功能：将文件的stat信息复制到用户空间addr地址处。
+// 返回值：成功返回0，失败返回-1。
 int
 filestat(struct file *f, uint64 addr)
 {
   struct proc *p = myproc();
   struct stat st;
   
+  // 只处理inode或设备类型的文件
   if(f->type == FD_INODE || f->type == FD_DEVICE){
-    ilock(f->ip);
-    stati(f->ip, &st);
-    iunlock(f->ip);
+    ilock(f->ip);           // 对inode加锁
+    stati(f->ip, &st);      // 获取inode的stat信息
+    iunlock(f->ip);         // 对inode解锁
+    // 将stat信息复制到用户空间
     if(copyout(p->pagetable, addr, (char *)&st, sizeof(st)) < 0)
-      return -1;
-    return 0;
+      return -1;            // 复制失败
+    return 0;               // 成功
   }
-  return -1;
+  return -1;                // 不支持的文件类型
 }
 
 // Read from file f.

@@ -12,6 +12,9 @@
         "proc.h": "c",
         "spinlock.h": "c",
         "syscall.h": "c",
-        "elf.h": "c"
+        "elf.h": "c",
+        "sleeplock.h": "c",
+        "sysinfo.h": "c",
+        "file.h": "c"
     }
 }
