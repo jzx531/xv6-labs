@@ -10,6 +10,8 @@
 // 加载程序段到页表中的静态函数声明。
 static int loadseg(pde_t *pgdir, uint64 addr, struct inode *ip, uint offset, uint sz);
 
+
+
 /*
  * 执行一个新的程序。
  * 替换当前进程的内存映像和上下文。
@@ -131,6 +133,8 @@ exec(char *path, char **argv)
   p->trapframe->epc = elf.entry;  // 初始程序计数器 = main
   p->trapframe->sp = sp; // 初始栈指针
   proc_freepagetable(oldpagetable, oldsz);
+
+  if(p->pid==1) vmprint(p->pagetable); // 打印进程地址空间布局
 
   return argc; // 这最终在 a0 中，作为 main(argc, argv) 的第一个参数
 

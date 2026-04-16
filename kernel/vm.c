@@ -498,3 +498,33 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+void vmprint_level(pagetable_t pagetable,int level)
+{
+  // 一个页表页中有 512 个 PTE。
+  for(int i = 0; i < 512; i++){
+    pte_t pte = pagetable[i];
+    //(pte & (PTE_R|PTE_W|PTE_X) 代表直接映射到物理内存
+    // 而 (pte & PTE_V) 代表该页表项有效
+    if(pte & PTE_V) {
+      for(int j = 0; j < level; j++)
+      {
+        printf("..");
+        if(j!= level-1) printf(" ");
+      }
+      printf("%d: pte ", i);
+      uint64 child = PTE2PA(pte);
+      printf("%p, pa  %p\n", pte,child);
+      if((pte & (PTE_R|PTE_W|PTE_X)) == 0) // 该 PTE 指向下一级页表
+      {
+        vmprint_level((pagetable_t)child, level+1);
+      }
+    }
+  }
+}
+
+void vmprint(pagetable_t pagetable)
+{
+    printf("pagetable: %p\n", pagetable);
+    vmprint_level(pagetable, 1);
+}
