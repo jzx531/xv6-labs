@@ -22,6 +22,10 @@ static void freeproc(struct proc *p);
 extern char trampoline[]; // trampoline.S
 
 // initialize the proc table at boot time.
+/*
+为每个进程分配一个内核栈。它将每个栈映射到KSTACK生成的虚拟地址，这为无效的栈保护页面留下了空间。
+kvmmap将映射的PTE添加到内核页表中，对kvminithart的调用将内核页表重新加载到satp中，以便硬件知道新的PTE。
+*/
 void
 procinit(void)
 {

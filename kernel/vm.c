@@ -53,6 +53,9 @@ kvminit()
 }
 
 // 切换硬件 SATP 寄存器到内核页表并刷新 TLB。
+// kvminithart (kernel/vm.c:53)来安装内核页表。
+// 它将根页表页的物理地址写入寄存器satp。
+// 之后，CPU将使用内核页表转换地址。由于内核使用标识映射，下一条指令的当前虚拟地址将映射到正确的物理内存地址。
 void
 kvminithart()
 {
@@ -84,6 +87,7 @@ walk(pagetable_t pagetable, uint64 va, int alloc)
     if(*pte & PTE_V) {
       pagetable = (pagetable_t)PTE2PA(*pte);
     } else {
+      // 情况 2：这一级目录还不存在
       if(!alloc || (pagetable = (pde_t*)kalloc()) == 0)
         return 0;
       memset(pagetable, 0, PGSIZE);
@@ -161,17 +165,49 @@ mappages(pagetable_t pagetable, uint64 va, uint64 size, uint64 pa, int perm)
   uint64 a, last;
   pte_t *pte;
 
+  // 1. 地址对齐处理
+  // 内存映射必须以“页”为单位进行。
+  // PGROUNDDOWN 宏的作用是将地址向下取整到页的起始地址。
+  // 例如：如果 va 是 0x1005，PGROUNDDOWN 后会变成 0x1000（假设页大小 4096）。
   a = PGROUNDDOWN(va);
+  
+  // 计算需要映射的最后一个页面的起始地址。
+  // (va + size - 1) 指向映射区域的最后一个字节。
+  // 对其向下取整，就得到了最后一个字节的所在页的起始地址。
   last = PGROUNDDOWN(va + size - 1);
+
+  // 2. 循环建立映射
+  // 这是一个无限循环，直到处理完所有页面（a == last）才 break。
   for(;;){
+    // 调用 walk 函数，找到虚拟地址 'a' 对应的页表项（PTE）的地址。
+    // 参数 '1' 表示：如果中间的页表页不存在，walk 函数应该自动分配新页（alloc=1）。
+    // 如果返回 0，说明内存耗尽，无法分配新的页表页，映射失败。
     if((pte = walk(pagetable, a, 1)) == 0)
       return -1;
+
+    // 检查该页表项是否已经有效（PTE_V 标志位已置位）。
+    // 如果已经有效，说明这块虚拟地址已经被映射过了。
+    // 在 xv6 中，重复映射通常被视为错误（除非使用专门的 remap 函数），因此 panic。
     if(*pte & PTE_V)
       panic("remap");
+
+    // 3. 填写页表项
+    // 这是建立映射的核心步骤。
+    // PA2PTE(pa): 将物理地址 'pa' 转换为页表项所需的格式（主要是提取物理页号 PPN）。
+    // perm:       传入的权限位（如可读、可写、可执行）。
+    // PTE_V:      有效位，置 1 表示这个映射是合法的。
+    //wolk的过程中完成了对前两页的映射，现在需要对最后一页进行映射。
     *pte = PA2PTE(pa) | perm | PTE_V;
+
+    // 4. 循环终止与步进
+    // 如果当前处理的页面就是最后一个页面，跳出循环，任务完成。
     if(a == last)
       break;
+
+    // 否则，处理下一页。
+    // 虚拟地址加一个页大小
     a += PGSIZE;
+    // 物理地址也加一个页大小（保证虚拟和物理内存的连续性）。
     pa += PGSIZE;
   }
   return 0;
