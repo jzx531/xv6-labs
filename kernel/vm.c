@@ -27,6 +27,7 @@ extern char trampoline[]; // trampoline.S 定义的陷阱跳板代码。
 void
 kvminit()
 {
+  // 调用 kalloc() 申请一块物理内存（4KB），用来存放根页表（Root Page Table）本身。
   kernel_pagetable = (pagetable_t) kalloc();
   memset(kernel_pagetable, 0, PGSIZE);
 

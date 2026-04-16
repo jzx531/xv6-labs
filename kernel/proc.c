@@ -239,6 +239,14 @@ userinit(void)
 
 // Grow or shrink user memory by n bytes.
 // Return 0 on success, -1 on failure.
+/*
+growproc根据n是正的还是负的调用uvmalloc或uvmdealloc。
+uvmalloc(kernel/vm.c:229)用kalloc分配物理内存，并用mappages将PTE添加到用户页表中。
+uvmdealloc调用uvmunmap(kernel/vm.c:174)，uvmunmap使用walk来查找对应的PTE，并使用kfree来释放PTE引用的物理内存。
+
+XV6使用进程的页表，不仅是告诉硬件如何映射用户虚拟地址，也是明晰哪一个物理页面已经被分配给该进程的唯一记录。
+这就是为什么释放用户内存（在uvmunmap中）需要检查用户页表的原因。
+*/
 int
 growproc(int n)
 {
