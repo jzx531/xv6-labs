@@ -43,6 +43,7 @@ procinit(void)
         panic("kalloc");
       uint64 va = KSTACK((int) (p - proc));
       kvmmap(va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+      //每个进程内核页关于该进程的内核栈的映射
       p->kstack = va;
   }
   kvminithart();
@@ -93,46 +94,87 @@ allocpid() {
 // If found, initialize state required to run in the kernel,
 // and return with p->lock held.
 // If there are no free procs, or a memory allocation fails, return 0.
+/*
+ * 分配一个新的进程结构。
+ * 如果找到空闲进程，初始化在内核中运行所需的状态，并持有 p->lock 返回。
+ * 如果没有空闲进程或内存分配失败，返回 0。
+ */
 static struct proc*
 allocproc(void)
 {
   struct proc *p;
 
+  // 遍历进程表，查找未使用的进程结构。
   for(p = proc; p < &proc[NPROC]; p++) {
     acquire(&p->lock);
     if(p->state == UNUSED) {
-      goto found;
+      goto found;  // 找到空闲进程，跳转到初始化代码。
     } else {
       release(&p->lock);
     }
   }
-  return 0;
+  return 0;  // 没有找到空闲进程。
 
 found:
+  // 分配进程 ID。
   p->pid = allocpid();
 
-  // Allocate a trapframe page.
+  // 分配陷阱帧页面，用于保存进程的陷阱上下文。
   if((p->trapframe = (struct trapframe *)kalloc()) == 0){
     release(&p->lock);
     return 0;
   }
 
-  // An empty user page table.
+  // 创建空的进程页表。
   p->pagetable = proc_pagetable(p);
   if(p->pagetable == 0){
-    freeproc(p);
+    freeproc(p);  // 释放已分配的资源。
     release(&p->lock);
     return 0;
   }
 
-  // Set up new context to start executing at forkret,
-  // which returns to user space.
-  memset(&p->context, 0, sizeof(p->context));
-  p->context.ra = (uint64)forkret;
-  p->context.sp = p->kstack + PGSIZE;
+  // 获取内核页表。
+  p->kernelpt = (pagetable_t)proc_kpt_init();
+  if(p->kernelpt == 0){
+    freeproc(p);  // 释放已分配的资源。
+    release(&p->lock);
+    return 0;
+  }
 
-  return p;
+    //由于进程被重新启用，,需要用procinit中重新设置进程内核页表。
+  char *pa = kalloc();
+  if(pa == 0)
+      panic("kalloc");
+  uint64 va = KSTACK((int) (p - proc));
+  uvmmap(p->kernelpt, va, (uint64)pa, PGSIZE, PTE_R | PTE_W);
+  p->kstack = va;
+
+  // 设置新的上下文，从 forkret 开始执行，返回到用户空间。
+  memset(&p->context, 0, sizeof(p->context));
+  p->context.ra = (uint64)forkret;  // 返回地址设置为 forkret。
+  p->context.sp = p->kstack + PGSIZE;  // 栈指针设置为内核栈顶。
+
+
+  return p;  // 返回分配的进程，锁仍被持有。
 }
+
+void proc_freekernelpt(pagetable_t kernelpt)
+{
+  for(int i = 0; i < 512; i++)
+  {
+     pte_t pte = kernelpt[i];
+     if(pte & PTE_V){
+      kernelpt[i] = 0;
+      if((pte & (PTE_R|PTE_W|PTE_X)) == 0)
+      {
+        uint64 child = PTE2PA(pte);
+        proc_freekernelpt((pagetable_t)child);
+      }
+    }
+  }
+  kfree((void*)kernelpt);
+}
+
 
 // free a proc structure and the data hanging from it,
 // including user pages.
@@ -140,6 +182,11 @@ found:
 static void
 freeproc(struct proc *p)
 {
+  //释放进程的内核栈。需要使用kfree
+  uvmunmap(p->kernelpt, p->kstack, 1, 1);
+  p->kstack = 0;
+  proc_freekernelpt(p->kernelpt);
+
   if(p->trapframe)
     kfree((void*)p->trapframe);
   p->trapframe = 0;
@@ -155,6 +202,7 @@ freeproc(struct proc *p)
   p->xstate = 0;
   p->state = UNUSED;
 }
+
 
 // Create a user page table for a given process,
 // with no user memory, but with trampoline pages.
@@ -485,7 +533,13 @@ scheduler(void)
         // before jumping back to us.
         p->state = RUNNING;
         c->proc = p;
+        //切换进程时，同时切换内核
+        proc_inithart(p->kernelpt);
         swtch(&c->context, &p->context);
+
+        //没有进程运行时scheduler()应当使用kernel_pagetable
+        // Come back to the global kernel page table
+        kvminithart();
 
         // Process is done running for now.
         // It should have changed its p->state before coming back.

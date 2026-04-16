@@ -6,6 +6,8 @@
 #include "defs.h"
 #include "fs.h"
 
+#include "spinlock.h" 
+#include "proc.h"
 /*
  * 内核的页表。
  * 页表是虚拟内存管理的核心结构，
@@ -18,6 +20,42 @@ pagetable_t kernel_pagetable;
 extern char etext[];  // kernel.ld 设置的内核代码结束地址。
 
 extern char trampoline[]; // trampoline.S 定义的陷阱跳板代码。
+
+//向进程内核页表添加映射
+void uvmmap(pagetable_t pagetable, uint64 va, uint64 pa, uint64 sz, int perm)
+{
+  if(mappages(pagetable, va, sz, pa, perm) != 0)
+      panic("uvmmap");
+}
+
+pagetable_t proc_kpt_init()
+{
+  pagetable_t kernelpt = uvmcreate();
+  if(kernelpt == 0) return 0;
+  // kernelpt = (pagetable_t) kalloc();
+  // memset(kernelpt, 0, PGSIZE);
+  // 映射 UART 寄存器，便于内核通过串口输出日志。
+  uvmmap(kernelpt,UART0, UART0, PGSIZE, PTE_R | PTE_W);
+
+  // 映射 virtio 磁盘设备的 MMIO 寄存器。
+  uvmmap(kernelpt,VIRTIO0, VIRTIO0, PGSIZE, PTE_R | PTE_W);
+
+  // 映射 CLINT（Core Local Interruptor）寄存器。
+  uvmmap(kernelpt,CLINT, CLINT, 0x10000, PTE_R | PTE_W);
+
+  // 映射 PLIC（Platform-Level Interrupt Controller）寄存器。
+  uvmmap(kernelpt,PLIC, PLIC, 0x400000, PTE_R | PTE_W);
+
+  // 将内核代码段映射为可执行且只读，避免内核代码被意外写入。
+  uvmmap(kernelpt,KERNBASE, KERNBASE, (uint64)etext-KERNBASE, PTE_R | PTE_X);
+
+  // 将内核数据段和剩余物理 RAM 映射为可读写。
+  uvmmap(kernelpt,(uint64)etext, (uint64)etext, PHYSTOP-(uint64)etext, PTE_R | PTE_W);
+
+  // 将陷阱跳板代码映射到最高内核虚拟地址，方便在异常/中断时切换到内核态。
+  uvmmap(kernelpt,TRAMPOLINE, (uint64)trampoline, PGSIZE, PTE_R | PTE_X);
+  return kernelpt;
+}
 
 /*
  * 创建内核的直接映射页表。
@@ -61,6 +99,13 @@ void
 kvminithart()
 {
   w_satp(MAKE_SATP(kernel_pagetable));
+  sfence_vma();
+}
+
+// Store kernel page table to SATP register
+void
+proc_inithart(pagetable_t kpt){
+  w_satp(MAKE_SATP(kpt));
   sfence_vma();
 }
 
@@ -145,7 +190,10 @@ kvmpa(uint64 va)
   pte_t *pte;
   uint64 pa;
 
-  pte = walk(kernel_pagetable, va, 0);
+  // pte = walk(kernel_pagetable, va, 0);
+  //使用进程内核页表
+  pte = walk(myproc()->kernelpt, va, 0);
+
   if(pte == 0)
     panic("kvmpa");
   if((*pte & PTE_V) == 0)
