@@ -273,6 +273,10 @@ userinit(void)
   uvminit(p->pagetable, initcode, sizeof(initcode));
   p->sz = PGSIZE;
 
+  //将用户新页表映射到用户内核进程,如果缺少这句，copyin将无法知道用户页表的地址，
+  // 因为copyin_new使用用户内核页表查询用户页表的地址。
+  u2kvmcopy(p->pagetable, p->kernelpt,0 , p->sz);
+
   // prepare for the very first "return" from kernel to user.
   p->trapframe->epc = 0;      // user program counter
   p->trapframe->sp = PGSIZE;  // user stack pointer
@@ -306,8 +310,12 @@ growproc(int n)
     if((sz = uvmalloc(p->pagetable, sz, sz + n)) == 0) {
       return -1;
     }
+    //将用户新增的页表映射到用户内核进程
+    u2kvmcopy(p->pagetable, p->kernelpt,sz-n , sz);
   } else if(n < 0){
     sz = uvmdealloc(p->pagetable, sz, sz + n);
+  //  同步缩小进程内核页表，但没释放物理内存
+    kvmdealloc(p->kernelpt, sz, sz + n);
   }
   p->sz = sz;
   return 0;
@@ -334,6 +342,9 @@ fork(void)
     return -1;
   }
   np->sz = p->sz;
+
+  //将用户新页表映射到用户内核进程
+  u2kvmcopy(np->pagetable, np->kernelpt,0 , np->sz);
 
   np->parent = p;
 

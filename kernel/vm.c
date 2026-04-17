@@ -371,6 +371,21 @@ uvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
   return newsz;
 }
 
+uint64
+kvmdealloc(pagetable_t pagetable, uint64 oldsz, uint64 newsz)
+{
+  if(newsz >= oldsz)
+    return oldsz;
+
+  if(PGROUNDUP(newsz) < PGROUNDUP(oldsz)){
+    int npages = (PGROUNDUP(oldsz) - PGROUNDUP(newsz)) / PGSIZE;
+    //与uvmdealloc不同的是，这里不释放物理页面
+    uvmunmap(pagetable, PGROUNDUP(newsz), npages, 0);
+  }
+
+  return newsz;
+}
+
 /*
  * 递归释放页表页。
  * 所有叶子映射必须先被删除。
@@ -454,6 +469,33 @@ uvmclear(pagetable_t pagetable, uint64 va)
 }
 
 /*
+实现将用户空间的映射添加到每个进程的内核页表，将进程的页表复制一份到进程的内核页表就好。
+*/
+int u2kvmcopy(pagetable_t pagetable, pagetable_t kernelpt,uint64 oldsz, uint64 newsz)
+{
+  pte_t *pte_from,*pte_to;
+  oldsz = PGROUNDUP(oldsz); // 页对齐
+  for(uint64 a = oldsz; a < newsz; a += PGSIZE){
+    if((pte_from = walk(pagetable, a, 0)) == 0)
+      panic("u2kvmcopy: pte should exist");
+    if(!(*pte_from & PTE_V)) //该条件在walk0中已经检查过了
+      panic("u2kvmcopy: page not present");
+    if((pte_to = walk(kernelpt, a, 1))==0)
+      panic("u2kvmcopy: pte walk failed");
+    uint64 pa = PTE2PA(*pte_from);
+    // 在内核模式下，无法访问设置了PTE_U的页面，所以我们要将其移除
+    uint flags = (PTE_FLAGS(*pte_from)) & (~PTE_U);
+    //不使用mappages是因为当重新将pagetable映射到kernelpt时，kernelpt已经被设置了PTE_V标志时会触发panic
+    // if(mappages(kernelpt, a, PGSIZE, pa, flags) != 0)
+    // {
+    //   uvmunmap(kernelpt, oldsz, (a-oldsz)/PGSIZE, 0);
+    //   return -1;
+    // }
+    *pte_to = PA2PTE(pa) | flags;
+  }
+  return 0;
+}
+/*
  * 将内核缓冲区内容复制到用户虚拟地址空间。
  * dstva 是用户虚拟地址，len 是复制长度。
  */
@@ -482,6 +524,7 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
 /*
  * 将用户虚拟地址空间的数据复制到内核缓冲区。
  */
+/*
 int
 copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
 {
@@ -503,11 +546,19 @@ copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
   }
   return 0;
 }
+*/
+int
+copyin(pagetable_t pagetable, char *dst, uint64 srcva, uint64 len)
+{
+  return copyin_new(pagetable, dst, srcva, len);
+}
+
 
 /*
  * 从用户虚拟地址空间复制一个以 '\0' 结尾的字符串到内核缓冲区。
  * 如果在 max 以内没有发现 '\0'，则返回 -1。
  */
+/*
 int
 copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
 {
@@ -545,7 +596,13 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
   } else {
     return -1;
   }
+}*/
+int
+copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
+{
+  return copyinstr_new(pagetable, dst, srcva, max);
 }
+
 
 void vmprint_level(pagetable_t pagetable,int level)
 {
@@ -560,9 +617,10 @@ void vmprint_level(pagetable_t pagetable,int level)
         printf("..");
         if(j!= level-1) printf(" ");
       }
-      printf("%d: pte ", i);
+      // printf("%d: pte ", i);
       uint64 child = PTE2PA(pte);
-      printf("%p, pa  %p\n", pte,child);
+      // printf("%p, pa  %p\n", pte,child);
+      printf("%d: pte %p pa %p\n", i, pte, child);
       if((pte & (PTE_R|PTE_W|PTE_X)) == 0) // 该 PTE 指向下一级页表
       {
         vmprint_level((pagetable_t)child, level+1);
@@ -573,6 +631,42 @@ void vmprint_level(pagetable_t pagetable,int level)
 
 void vmprint(pagetable_t pagetable)
 {
-    printf("pagetable: %p\n", pagetable);
+    printf("page table %p\n", pagetable);
     vmprint_level(pagetable, 1);
 }
+
+
+// /**
+//  * @param pagetable 所要打印的页表
+//  * @param level 页表的层级
+//  */
+// void
+// _vmprint(pagetable_t pagetable, int level){
+//   // there are 2^9 = 512 PTEs in a page table.
+//   for(int i = 0; i < 512; i++){
+//     pte_t pte = pagetable[i];
+//     // PTE_V is a flag for whether the page table is valid
+//     if(pte & PTE_V){
+//       for (int j = 0; j < level; j++){
+//         if (j) printf(" ");
+//         printf("..");
+//       }
+//       uint64 child = PTE2PA(pte);
+//       printf("%d: pte %p pa %p\n", i, pte, child);
+//       if((pte & (PTE_R|PTE_W|PTE_X)) == 0){
+//         // this PTE points to a lower-level page table.
+//         _vmprint((pagetable_t)child, level + 1);
+//       }
+//     }
+//   }
+// }
+
+// /**
+//  * @brief vmprint 打印页表
+//  * @param pagetable 所要打印的页表
+//  */
+// void
+// vmprint(pagetable_t pagetable){
+//   printf("page table %p\n", pagetable);
+//   _vmprint(pagetable, 1);
+// }

@@ -88,6 +88,9 @@ exec(char *path, char **argv)
   sp = sz;
   stackbase = sp - PGSIZE;
 
+  //将用户新页表映射到用户内核进程
+  u2kvmcopy(pagetable, p->kernelpt,0 , sz);
+
   // 推送参数字符串，准备 ustack 中的其余栈。
   for(argc = 0; argv[argc]; argc++) {
     if(argc >= MAXARG)
