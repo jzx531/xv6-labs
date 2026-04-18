@@ -67,7 +67,23 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } 
+  else if(r_scause() == 13 || r_scause() == 15){
+    // 页面错误
+    uint64 fault_va = r_stval();
+    char * pa;
+    //让fault_va在栈页内存之内，代表栈指针分配，但是没有分配物理页发生缺页，所以fault_va在栈指针分配的页内
+    if(PGROUNDUP(p->trapframe->sp)-1 < fault_va && fault_va < p->sz && (pa = kalloc()) != 0){
+      memset(pa, 0, PGSIZE);
+      if(mappages(p->pagetable, PGROUNDDOWN(fault_va), PGSIZE, (uint64)pa, PTE_R | PTE_W | PTE_X | PTE_U) != 0) {
+          kfree(pa);
+          p->killed = 1;
+      }
+    }else{
+      p->killed = 1;
+    }
+  }
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;

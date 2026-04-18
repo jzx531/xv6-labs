@@ -64,10 +64,43 @@ argint(int n, int *ip)
 // Retrieve an argument as a pointer.
 // Doesn't check for legality, since
 // copyin/copyout will do that.
+/*
+处理通过sbrk申请内存后还未实际分配就传给系统调用使用的情况，系统调用的处理会陷入内核，scause寄存器存储的值是8，如果此时传入的地址还未实际分配，就不能走到上文usertrap中判断scause是13或15后进行内存分配的代码，syscall执行就会失败
+
+系统调用流程：
+
+陷入内核==>usertrap中r_scause()==8的分支==>syscall()==>回到用户空间
+页面错误流程：
+
+陷入内核==>usertrap中r_scause()==13||r_scause()==15的分支==>分配内存==>回到用户空间
+因此就需要找到在何时系统调用会使用这些地址，将地址传入系统调用后，会通过argaddr函数(kernel/syscall.c)从寄存器中读取，
+因此在这里添加物理内存分配的代码
+*/
+
 int
 argaddr(int n, uint64 *ip)
 {
   *ip = argraw(n);
+
+  struct proc* p = myproc();
+
+  // 处理向系统调用传入lazy allocation地址的情况
+  if(walkaddr(p->pagetable, *ip) == 0) {
+    if(PGROUNDUP(p->trapframe->sp) - 1 < *ip && *ip < p->sz) {
+      char* pa = kalloc();
+      if(pa == 0)
+        return -1;
+      memset(pa, 0, PGSIZE);
+
+      if(mappages(p->pagetable, PGROUNDDOWN(*ip), PGSIZE, (uint64)pa, PTE_R | PTE_W | PTE_X | PTE_U) != 0) {
+        kfree(pa);
+        return -1;
+      }
+    } else {
+      return -1;
+    }
+  }
+
   return 0;
 }
 

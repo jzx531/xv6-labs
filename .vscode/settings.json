@@ -3,6 +3,11 @@
         "param.h": "c",
         "proc.h": "c",
         "spinlock.h": "c",
-        "fs.h": "c"
+        "fs.h": "c",
+        "types.h": "c",
+        "defs.h": "c",
+        "memlayout.h": "c",
+        "sleeplock.h": "c",
+        "syscall.h": "c"
     }
 }
