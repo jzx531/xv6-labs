@@ -72,6 +72,7 @@ uartinit(void)
   WriteReg(FCR, FCR_FIFO_ENABLE | FCR_FIFO_CLEAR);
 
   // enable transmit and receive interrupts.
+  //开启uart接收和发送中断
   WriteReg(IER, IER_TX_ENABLE | IER_RX_ENABLE);
 
   initlock(&uart_tx_lock, "uart");
@@ -184,6 +185,7 @@ uartintr(void)
     int c = uartgetc();
     if(c == -1)
       break;
+    //uart中断处理完后交给console中断处理
     consoleintr(c);
   }
 

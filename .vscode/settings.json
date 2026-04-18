@@ -1,0 +1,8 @@
+{
+    "files.associations": {
+        "param.h": "c",
+        "proc.h": "c",
+        "spinlock.h": "c",
+        "fs.h": "c"
+    }
+}

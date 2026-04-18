@@ -180,40 +180,44 @@ devintr()
 
   if((scause & 0x8000000000000000L) &&
      (scause & 0xff) == 9){
-    // this is a supervisor external interrupt, via PLIC.
+    // 这是来自PLIC的supervisor外部中断
+    // scause最高位为1表示中断，低8位等于9表示外部中断
 
-    // irq indicates which device interrupted.
+    // irq标识是哪个设备引发了中断
     int irq = plic_claim();
 
     if(irq == UART0_IRQ){
+      // 串口设备中断
       uartintr();
     } else if(irq == VIRTIO0_IRQ){
+      // 虚拟磁盘设备中断
       virtio_disk_intr();
     } else if(irq){
+      // 未知设备中断
       printf("unexpected interrupt irq=%d\n", irq);
     }
 
-    // the PLIC allows each device to raise at most one
-    // interrupt at a time; tell the PLIC the device is
-    // now allowed to interrupt again.
+    // PLIC每个设备同时只允许一个中断请求
+    // 处理完成后通知PLIC该设备可以再次中断
     if(irq)
       plic_complete(irq);
 
     return 1;
   } else if(scause == 0x8000000000000001L){
-    // software interrupt from a machine-mode timer interrupt,
-    // forwarded by timervec in kernelvec.S.
+    // 来自machine-mode定时器中断的软中断
+    // 由kernelvec.S中的timervec转发到这里
 
     if(cpuid() == 0){
+      // 只由CPU 0处理时钟中断，递增系统ticks
       clockintr();
     }
     
-    // acknowledge the software interrupt by clearing
-    // the SSIP bit in sip.
+    // 清除sip寄存器中的SSIP位，确认已处理软件中断
     w_sip(r_sip() & ~2);
 
     return 2;
   } else {
+    // 未识别的中断类型
     return 0;
   }
 }
