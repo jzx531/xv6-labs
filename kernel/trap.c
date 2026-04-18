@@ -71,7 +71,7 @@ usertrap(void)
     if(p->killed)
       exit(-1);
 
-    // sepc指向ecall指令，但我们要返回下一条指令
+    // 当前sepc指向ecall指令，但我们要返回下一条指令,ecall跳转完成
     // 将epc加4跳过ecall指令（RISC-V中指令长度为4字节）
     p->trapframe->epc += 4;
 
@@ -81,6 +81,21 @@ usertrap(void)
     // 处理系统调用
     syscall();
   } else if((which_dev = devintr()) != 0){
+    if(which_dev == 2) {
+      //定时器中断
+      if(++p->ticks_count == p->alarm_interval)
+      {
+        //在触发定时器中断时，进程可能已经被换出，因此需要重新获取进程
+        p = myproc();
+        //定时中断处理可能改变寄存器内容,所以需要进一步保存进程寄存器
+        memmove(p->alarm_trapframe, p->trapframe, sizeof(struct trapframe));
+        //触发定时器中断
+        p->trapframe->epc = (uint64)p->alarm_handler;
+        p->is_alarming = 1;
+        p->ticks_count = 0;
+      }
+      yield();
+    }
     // 处理设备中断
   } else {
     // 未知的陷阱类型

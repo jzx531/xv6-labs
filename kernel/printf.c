@@ -132,3 +132,20 @@ printfinit(void)
   initlock(&pr.lock, "pr");
   pr.locking = 1;
 }
+
+
+void backtrace(void)
+{
+  printf("Backtrace:\n");
+  uint64 fp = r_fp();//获取栈帧
+  // 返回地址位于栈帧帧指针的固定偏移(-8)位置，并且保存的帧指针位于帧指针的固定偏移(-16)位置
+  // 在xv6中，如果fp不在页的有效范围代表遍历完了帧
+  while((PGROUNDUP(fp) - PGROUNDDOWN(fp)) ==PGSIZE)
+  {
+    uint64 rt = *(uint64*)(fp - 8); //获取返回地址
+    printf("%p\n", rt); //打印返回地址
+    //获取下一个栈帧
+    fp = *(uint64*)(fp - 16); //获取帧指针
+  }
+
+}

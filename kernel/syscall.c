@@ -100,6 +100,8 @@ argstr(int n, char *buf, int max)
 
 // 系统调用函数的外部声明
 // 这些函数在其他文件中实现，处理具体的系统调用逻辑
+extern uint64 sys_sigreturn(void);
+extern uint64 sys_sigalarm(void);
 extern uint64 sys_chdir(void);
 extern uint64 sys_close(void);
 extern uint64 sys_dup(void);
@@ -146,6 +148,8 @@ static uint64 (*syscalls[])(void) = {
 [SYS_link]    sys_link,    // 创建文件硬链接
 [SYS_mkdir]   sys_mkdir,   // 创建目录
 [SYS_close]   sys_close,   // 关闭文件描述符
+[SYS_sigalarm]sys_sigalarm, // 设置闹钟
+[SYS_sigreturn] sys_sigreturn, // 处理闹钟中断返回
 };
 
 // 主系统调用处理函数

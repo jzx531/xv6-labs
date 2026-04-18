@@ -128,6 +128,13 @@ r_sepc()
   return x;
 }
 
+static inline uint64 r_fp()
+{
+  uint64 x;
+  asm volatile("mv %0, s0" : "=r" (x));
+  return x;
+}
+
 // Machine Exception Delegation
 static inline uint64
 r_medeleg()
@@ -323,7 +330,9 @@ sfence_vma()
 #define PGSIZE 4096 // bytes per page
 #define PGSHIFT 12  // bits of offset within a page
 
+//相当于先进一位进入下一页，在向下取整
 #define PGROUNDUP(sz)  (((sz)+PGSIZE-1) & ~(PGSIZE-1))
+//向下取整抹去除了页号外的数据
 #define PGROUNDDOWN(a) (((a)) & ~(PGSIZE-1))
 
 #define PTE_V (1L << 0) // valid
