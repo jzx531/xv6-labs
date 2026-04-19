@@ -67,7 +67,20 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } 
+  /*
+  r_scause() == 15: RISC-V 处理器在用户态执行一条写指令（如 sw）时，如果发现目标虚拟地址对应的页表项（PTE）没有写权限（PTE_W 位未设置），就会触发一个“Store/AMO page fault”异常，其异常码为 15。
+r_scause() == 13: 这是“Load page fault”，通常与 COW 关系不大，但在这里一并处理可以增强健壮性。
+  */
+  else if((r_scause() == 13)|| (r_scause() == 15))
+  {
+      uint64 fault_va = r_stval();  // 获取出错的虚拟地址
+  if(fault_va >= p->sz
+    || cowpage(p->pagetable, fault_va) != 0
+    || cowalloc(p->pagetable, PGROUNDDOWN(fault_va)) == 0)
+    p->killed = 1;
+  }
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;

@@ -305,13 +305,17 @@ uvmfree(pagetable_t pagetable, uint64 sz)
 // physical memory.
 // returns 0 on success, -1 on failure.
 // frees any allocated pages on failure.
+/*
+修改uvmcopy函数，实现COW机制，父进程复制给子进程时,不为子进程分配内存,
+而是将父进程的物理内存映射到子进程的虚拟地址上
+*/
 int
 uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
 {
   pte_t *pte;
   uint64 pa, i;
   uint flags;
-  char *mem;
+  // char *mem;
 
   for(i = 0; i < sz; i += PGSIZE){
     if((pte = walk(old, i, 0)) == 0)
@@ -320,19 +324,38 @@ uvmcopy(pagetable_t old, pagetable_t new, uint64 sz)
       panic("uvmcopy: page not present");
     pa = PTE2PA(*pte);
     flags = PTE_FLAGS(*pte);
-    if((mem = kalloc()) == 0)
-      goto err;
-    memmove(mem, (char*)pa, PGSIZE);
-    if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
-      kfree(mem);
-      goto err;
+
+
+    // if((mem = kalloc()) == 0)
+    //   goto err;
+    // memmove(mem, (char*)pa, PGSIZE);
+    // if(mappages(new, i, PGSIZE, (uint64)mem, flags) != 0){
+    //   kfree(mem);
+    //   goto err;
+    // }
+
+    // 实现COW机制
+    //仅对可写页面设置PTE_W标志
+    if(flags & PTE_W)
+    {
+      //禁用写并设置COW Fork标记
+      //关闭写标记,表示为COW页面，触发cause == 15异常
+      flags = (flags | PTE_F) & ~PTE_W;
+      *pte = PA2PTE(pa) | flags;
     }
+    if(mappages(new, i, PGSIZE, pa, flags) != 0)
+    {
+      uvmunmap(new, 0, i / PGSIZE, 1);
+      return -1;
+    }
+    //增加内存引用计数
+    kaddrefcnt((char*)pa);
   }
   return 0;
 
- err:
-  uvmunmap(new, 0, i / PGSIZE, 1);
-  return -1;
+//  err:
+//   uvmunmap(new, 0, i / PGSIZE, 1);
+//   return -1;
 }
 
 // mark a PTE invalid for user access.
@@ -359,6 +382,13 @@ copyout(pagetable_t pagetable, uint64 dstva, char *src, uint64 len)
   while(len > 0){
     va0 = PGROUNDDOWN(dstva);
     pa0 = walkaddr(pagetable, va0);
+    //当内核拷贝到用户空间时,会发生对内存的写操作,需要进行写时复制cow
+// 处理COW页面的情况
+  if(cowpage(pagetable, va0) == 0) {
+    // 更换目标物理地址
+    pa0 = (uint64)cowalloc(pagetable, va0);
+  }
+
     if(pa0 == 0)
       return -1;
     n = PGSIZE - (dstva - va0);
@@ -440,3 +470,92 @@ copyinstr(pagetable_t pagetable, char *dst, uint64 srcva, uint64 max)
     return -1;
   }
 }
+
+/**
+ * @brief cowpage 判断一个页面是否为COW页面
+ * @param pagetable 指定查询的页表
+ * @param va 虚拟地址
+ * @return 0 是 -1 不是
+ */
+int cowpage(pagetable_t pagetable, uint64 va) {
+  if(va >= MAXVA)
+    return -1;
+  pte_t* pte = walk(pagetable, va, 0);
+  if(pte == 0)
+    return -1;
+  if((*pte & PTE_V) == 0)
+    return -1;
+  return (*pte & PTE_F ? 0 : -1);
+}
+
+/**
+ * @brief uvmcow 实现COW机制
+ * @param pagetable 指定查询的页表
+ * @param va 虚拟地址
+ * @return 0 成功 -1 失败
+ */
+void* cowalloc(pagetable_t pagetable, uint64 va) {
+  if(va % PGSIZE != 0)
+    return 0;
+
+  uint64 pa = walkaddr(pagetable, va);  // 获取对应的物理地址
+  if(pa == 0)
+    return 0;
+
+  pte_t* pte = walk(pagetable, va, 0);  // 获取对应的PTE
+
+  if(krefcnt((char*)pa) == 1) {
+    // 只剩一个进程对此物理地址存在引用
+    // 则直接修改对应的PTE即可
+    *pte |= PTE_W;
+    *pte &= ~PTE_F;
+    return (void*)pa;
+  } else {
+    // 多个进程对物理内存存在引用
+    // 需要分配新的页面，并拷贝旧页面的内容
+    char* mem = kalloc();
+    if(mem == 0)
+      return 0;
+
+    // 复制旧页面内容到新页
+    memmove(mem, (char*)pa, PGSIZE);
+
+    // 清除PTE_V，否则在mappagges中会判定为remap
+    *pte &= ~PTE_V;
+
+    // 为新页面添加映射
+    if(mappages(pagetable, va, PGSIZE, (uint64)mem, (PTE_FLAGS(*pte) | PTE_W) & ~PTE_F) != 0) {
+      kfree(mem);
+      *pte |= PTE_V;
+      return 0;
+    }
+
+    // 将原来的物理内存引用计数减1,因为已经将一个引用重分配了物理内存
+    kfree((char*)PGROUNDDOWN(pa));
+    return mem;
+  }
+}
+
+
+
+
+
+
+ 
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
