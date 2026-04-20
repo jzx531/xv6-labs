@@ -477,7 +477,8 @@ scheduler(void)
         p->state = RUNNING;
         c->proc = p;
         swtch(&c->context, &p->context);
-
+// 当进程 p 因为时间片用完（yield）、等待 I/O（sleep）或退出（exit）而再次调用 sched() 时，swtch 会反向执行，将控制权交还给这里。
+// 代码继续执行 swtch 下一行。
         // Process is done running for now.
         // It should have changed its p->state before coming back.
         c->proc = 0;
@@ -514,7 +515,8 @@ sched(void)
     panic("sched interruptible");
 
   intena = mycpu()->intena;
-  swtch(&p->context, &mycpu()->context);
+  swtch(&p->context, &mycpu()->context);//切换进程中的线程上下文,目前是进程中单线程的情况
+  //mycpu()属于调度器scheduler:进程 -> sched() -> swtch -> 调度器 -> (选择新进程) -> swtch -> 新进程。
   mycpu()->intena = intena;
 }
 
