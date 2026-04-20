@@ -421,7 +421,7 @@ wait(uint64 addr)
           // Found one.
           pid = np->pid;
           if(addr != 0 && copyout(p->pagetable, addr, (char *)&np->xstate,
-                                  sizeof(np->xstate)) < 0) {
+                                  sizeof(np->xstate)) < 0) {//copyout取出进程状态码
             release(&np->lock);
             release(&p->lock);
             return -1;

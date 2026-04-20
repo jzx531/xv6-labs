@@ -72,3 +72,50 @@ cpuid和mycpu的返回值很脆弱：如果定时器中断并导致线程让步�
 
 函数myproc (kernel/proc.c:68)返回当前CPU上运行进程struct proc的指针。myproc禁用中断，调用mycpu，从struct cpu中取出当前进程指针（c->proc），然后启用中断。即使启用中断，myproc的返回值也可以安全使用：如果计时器中断将调用进程移动到另一个CPU，其struct proc指针不会改变。
 
+让我们想象一对调用，sleep和wakeup，工作流程如下。Sleep(chan)在任意值chan上睡眠，称为等待通道（wait channel）。Sleep将调用进程置于睡眠状态，释放CPU用于其他工作。Wakeup(chan)唤醒所有在chan上睡眠的进程（如果有），使其sleep调用返回。如果没有进程在chan上等待，则wakeup不执行任何操作。我们可以将信号量实现更改为使用sleep和wakeup（更改的行添加了注释）：
+
+```c
+void V(struct semaphore* s) {
+    acquire(&s->lock);
+    s->count += 1;
+    wakeup(s);
+    release(&s->lock);
+}
+
+void P(struct semaphore* s) {
+    acquire(&s->lock);
+
+    while (s->count == 0)
+        sleep(s, &s->lock);  // !pay attention
+    s->count -= 1;
+    release(&s->lock);
+}
+
+```
+
+## Pipes
+
+每个管道都由一个struct pipe表示，其中包含一个锁lock和一个数据缓冲区data。字段nread和nwrite统计从缓冲区读取和写入缓冲区的总字节数。缓冲区是环形的：在buf[PIPESIZE-1]之后写入的下一个字节是buf[0]。而计数不是环形。此约定允许实现区分完整缓冲区（nwrite==nread+PIPESIZE）和空缓冲区（nwrite==nread），但这意味着对缓冲区的索引必须使用buf[nread%PIPESIZE]，而不仅仅是buf[nread]（对于nwrite也是如此）。
+
+让我们假设对piperead和pipewrite的调用同时发生在两个不同的CPU上。Pipewrite（kernel/pipe.c:77）从获取管道锁开始，它保护计数、数据及其相关不变量。Piperead（kernel/pipe.c:103）然后也尝试获取锁，但无法实现。它在acquire（kernel/spinlock.c:22）中旋转等待锁。当piperead等待时，pipewrite遍历被写入的字节（addr[0..n-1]），依次将每个字节添加到管道中（kernel/pipe.c:95）。在这个循环中缓冲区可能会被填满（kernel/pipe.c:85）。在这种情况下，pipewrite调用wakeup来提醒所有处于睡眠状态的读进程缓冲区中有数据等待，然后在&pi->nwrite上睡眠，等待读进程从缓冲区中取出一些字节。作为使pipewrite进程进入睡眠状态的一部分，Sleep释放pi->lock。
+
+现在pi->lock可用，piperead设法获取它并进入其临界区域：它发现pi->nread != pi->nwrite（kernel/pipe.c:110）（pipewrite进入睡眠状态是因为pi->nwrite == pi->nread+PIPESIZE（kernel/pipe.c:85）），因此它进入for循环，从管道中复制数据（kernel/pipe.c:117），并根据复制的字节数增加nread。那些读出的字节就可供写入，因此piperead调用wakeup（kernel/pipe.c:124）返回之前唤醒所有休眠的写进程。Wakeup寻找一个在&pi->nwrite上休眠的进程，该进程正在运行pipewrite，但在缓冲区填满时停止。它将该进程标记为RUNNABLE。
+
+管道代码为读者和写者使用单独的睡眠通道（pi->nread和pi->nwrite）；这可能会使系统在有许多读者和写者等待同一管道这种不太可能的情况下更加高效。管道代码在检查休眠条件的循环中休眠；如果有多个读者或写者，那么除了第一个醒来的进程之外，所有进程都会看到条件仍然错误，并再次睡眠。
+
+## wait和exit,kill
+
+Wait使用调用进程的p->lock作为条件锁，以避免丢失唤醒，并在开始时获取该锁（kernel/proc.c:398）。然后它扫描进程表。如果它发现一个子进程处于ZOMBIE状态，它将释放该子进程的资源及其proc结构体，将该子进程的退出状态码复制到提供给wait的地址（如果不是0），并返回该子进程的进程ID。如果wait找到子进程但没有子进程退出，它将调用sleep以等待其中一个退出（kernel/proc.c:445），然后再次扫描。这里，sleep中释放的条件锁是等待进程的p->lock，这是上面提到的特例。注意，wait通常持有两个锁：它在试图获得任何子进程的锁之前先获得自己的锁；因此，整个xv6都必须遵守相同的锁定顺序（父级，然后是子级），以避免死锁。
+
+
+ait查看每个进程的np->parent以查找其子进程。它使用np->parent而不持有np->lock，这违反了通常的规则，即共享变量必须受到锁的保护。np可能是当前进程的祖先，在这种情况下，获取np->lock可能会导致死锁，因为这将违反上述顺序。这种情况下无锁检查np->parent似乎是安全的：进程的parent字段仅由其父进程更改，因此如果np->parent==p为true，除非当前流程更改它，否则该值无法被更改，
+
+Exit（kernel/proc.c:333）记录退出状态码，释放一些资源，将所有子进程提供给init进程，在父进程处于等待状态时唤醒父进程，将调用方标记为僵尸进程（zombie），并永久地让出CPU。最后的顺序有点棘手。退出进程必须在将其状态设置为ZOMBIE并唤醒父进程时持有其父进程的锁，因为父进程的锁是防止在wait中丢失唤醒的条件锁。子级还必须持有自己的p->lock，否则父级可能会看到它处于ZOMBIE状态，并在它仍运行时释放它。锁获取顺序对于避免死锁很重要：因为wait先获取父锁再获取子锁，所以exit必须使用相同的顺序。
+
+Exit调用一个专门的唤醒函数wakeup1，该函数仅唤醒父进程，且父进程必须正在wait中休眠（kernel/proc.c:598）。在将自身状态设置为ZOMBIE之前，子进程唤醒父进程可能看起来不正确，但这是安全的：虽然wakeup1可能会导致父进程运行，但wait中的循环在scheduler释放子进程的p->lock之前无法检查子进程，所以wait在exit将其状态设置为ZOMBIE（kernel/proc.c:386）之前不能查看退出进程。
+
+exit允许进程自行终止，而kill（kernel/proc.c:611）允许一个进程请求另一个进程终止。对于kill来说，直接销毁受害者进程（即要杀死的进程）太复杂了，因为受害者可能在另一个CPU上执行，也许是在更新内核数据结构的敏感序列中间。因此，kill的工作量很小：它只是设置受害者的p->killed，如果它正在睡眠，则唤醒它。受害者进程终将进入或离开内核，此时，如果设置了p->killed，usertrap中的代码将调用exit。如果受害者在用户空间中运行，它将很快通过进行系统调用或由于计时器（或其他设备）中断而进入内核。
+
+如果受害者进程在sleep中，kill对wakeup的调用将导致受害者从sleep中返回。这存在潜在的危险，因为等待的条件可能不为真。但是，xv6对sleep的调用总是封装在while循环中，该循环在sleep返回后重新测试条件。一些对sleep的调用还在循环中测试p->killed，如果它被设置，则放弃当前活动。只有在这种放弃是正确的情况下才能这样做。例如，如果设置了killed标志，则管道读写代码返回；最终代码将返回到陷阱，陷阱将再次检查标志并退出。
+
+一些XV6的sleep循环不检查p->killed，因为代码在应该是原子操作的多步系统调用的中间。virtio驱动程序（kernel/virtio_disk.c:242）就是一个例子：它不检查p->killed，因为一个磁盘操作可能是文件系统保持正确状态所需的一组写入操作之一。等待磁盘I/O时被杀死的进程将不会退出，直到它完成当前系统调用并且usertrap看到killed标志
