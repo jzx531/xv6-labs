@@ -146,7 +146,7 @@ sys_link(void)
     goto bad;
   ilock(dp);
   if(dp->dev != ip->dev || dirlink(dp, name, ip->inum) < 0){
-    iunlockput(dp);
+    iunlockput(dp);//至此，新旧两个文件名指向了同一个 inode。
     goto bad;
   }
   iunlockput(dp);
@@ -283,6 +283,8 @@ create(char *path, short type, short major, short minor)
   return ip;
 }
 
+#define MAX_SYMLINK_DEPTH 10
+
 uint64
 sys_open(void)
 {
@@ -316,11 +318,48 @@ sys_open(void)
     }
   }
 
+  //处理设备
   if(ip->type == T_DEVICE && (ip->major < 0 || ip->major >= NDEV)){
     iunlockput(ip);
     end_op();
     return -1;
   }
+
+  //处理符号连接
+  if(ip->type == T_SYMLINK && !(omode & O_NOFOLLOW))
+  {
+    for(int i = 0; i < MAX_SYMLINK_DEPTH; i++)
+    {
+      //将inode ip对应的数据读入path
+      if(readi(ip, 0, (uint64)path, 0, MAXPATH)!= MAXPATH)
+      {
+        iunlockput(ip);
+        end_op();
+        return -1;
+      }
+      iunlockput(ip);
+      ip = namei(path);
+      if(ip == 0)
+      {
+        end_op();
+        return -1;
+      }
+      ilock(ip);
+      if(ip->type != T_SYMLINK)
+      {
+        break;
+      }
+      //如果path指向的inode是符号连接,则继续处理
+    }
+  }
+  //超过MAX_SYMLINK_DEPTH
+  if(ip->type == T_SYMLINK)
+  {
+    iunlockput(ip);
+    end_op();
+    return -1;
+  }
+  
 
   if((f = filealloc()) == 0 || (fd = fdalloc(f)) < 0){
     if(f)
@@ -482,5 +521,41 @@ sys_pipe(void)
     fileclose(wf);
     return -1;
   }
+  return 0;
+}
+
+//创建新的inode,将旧的inode的路径写入新的,从而实现软连接
+uint64
+sys_symlink(void)
+{
+  char target[MAXPATH],path[MAXPATH];
+  struct inode *ip_path;
+
+  if(argstr(0, target, MAXPATH) < 0 || argstr(1, path, MAXPATH) < 0)
+  {
+    return -1;
+  }
+
+  begin_op();//记录log
+  //创建一个新的数据块inode
+  ip_path = create(path, T_SYMLINK, 0, 0);
+  if(ip_path == 0)
+  {
+    //创建失败
+    // iunlockput(ip_path);
+    end_op();
+    return -1;
+  }
+  
+  //向inode数据块写入target路径
+  if(writei(ip_path, 0, (uint64)target, 0,MAXPATH) <MAXPATH )
+  {
+    iunlockput(ip_path);
+    end_op();
+    return -1;
+  }
+
+  iunlockput(ip_path);
+  end_op();
   return 0;
 }

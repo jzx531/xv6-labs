@@ -463,13 +463,3 @@ int writei(struct inode *ip, int user_src, uint64 src, uint off, uint n)
 4. **内存管理**：处理用户空间和内核空间的地址差异。
 5. **持久化**：通过 `log_write` 和 `iupdate` 确保数据和元数据的安全。
 
-## 目录层
-
-目录的内部实现很像文件。其inode的type为T_DIR，其数据是一系列目录条目（directory entries）。每个条目（entry）都是一个struct dirent（kernel/fs.h:56），其中包含一个名称name和一个inode编号inum。名称最多为DIRSIZ（14）个字符；如果较短，则以NUL（0）字节终止。inode编号为零的条目是空的。
-
-函数dirlookup（kernel/fs.c:527）在目录中搜索具有给定名称的条目。如果找到一个，它将返回一个指向相应inode的指针，解开锁定，并将 *poff 
-
-设置为目录中条目的字节偏移量，以满足调用方希望对其进行编辑的情形。如果dirlookup找到具有正确名称的条目，它将更新*poff并返回通过iget获得的未锁定的inode。Dirlookup是iget返回未锁定indoe的原因。调用者已锁定dp，因此，如果对.，当前目录的别名，进行查找，则在返回之前尝试锁定indoe将导致重新锁定dp并产生死锁(还有更复杂的死锁场景，涉及多个进程和..，父目录的别名。.不是唯一的问题。）调用者可以解锁dp，然后锁定ip，确保它一次只持有一个锁
-
-函数dirlink（kernel/fs.c:554）将给定名称和inode编号的新目录条目写入目录dp。如果名称已经存在，dirlink将返回一个错误（kernel/fs.c:560-564）。主循环读取目录条目，查找未分配的条目。当找到一个时，它会提前停止循环（kernel/fs.c:538-539），并将off设置为可用条目的偏移量。否则，循环结束时会将off设置为dp->size。无论哪种方式，dirlink都会通过在偏移off处写入（kernel/fs.c:574-577）来向目录添加一个新条目。
-

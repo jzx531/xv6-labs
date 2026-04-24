@@ -228,9 +228,7 @@ log_write(struct buf *b)
   }
   log.lh.block[i] = b->blockno;
   if (i == log.lh.n) {  // Add new block to log?
-    bpin(b);//用 bpin 增加该缓冲区的引用计数。
-    // 这非常关键，它防止缓冲区缓存（Buffer Cache）将这个块换出到磁盘。
-    // 因为日志系统要求：在事务提交前，修改必须只存在于内存日志中，绝对不能提前写回文件系统的数据区。
+    bpin(b);
     log.lh.n++;
   }
   release(&log.lock);
