@@ -167,8 +167,11 @@ sockrecvudp(struct mbuf *m, uint32 raddr, uint16 lport, uint16 rport)
 
   acquire(&lock);
   si = sockets;
+  // printf("sockrecvudp: raddr=%x lport=%d rport=%d\n",
+  //      raddr, lport, rport);
   while (si) {
-    if (si->raddr == raddr && si->lport == lport && si->rport == rport)
+    // if (si->raddr == raddr && si->lport == lport && si->rport == rport)
+    if(si->lport == lport)  
       goto found;
     si = si->next;
   }

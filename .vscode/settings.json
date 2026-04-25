@@ -1,0 +1,11 @@
+{
+    "files.associations": {
+        "param.h": "c",
+        "types.h": "c",
+        "net.h": "c",
+        "memlayout.h": "c",
+        "e1000_dev.h": "c",
+        "user.h": "c",
+        "defs.h": "c"
+    }
+}

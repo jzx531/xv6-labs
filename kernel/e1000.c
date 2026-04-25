@@ -8,22 +8,22 @@
 #include "e1000_dev.h"
 #include "net.h"
 
-#define TX_RING_SIZE 16
-static struct tx_desc tx_ring[TX_RING_SIZE] __attribute__((aligned(16)));
-static struct mbuf *tx_mbufs[TX_RING_SIZE];
+#define TX_RING_SIZE 16  // 发送环大小
+static struct tx_desc tx_ring[TX_RING_SIZE] __attribute__((aligned(16)));  // 发送描述符环
+static struct mbuf *tx_mbufs[TX_RING_SIZE];  // 发送mbuf缓冲区
 
-#define RX_RING_SIZE 16
-static struct rx_desc rx_ring[RX_RING_SIZE] __attribute__((aligned(16)));
-static struct mbuf *rx_mbufs[RX_RING_SIZE];
+#define RX_RING_SIZE 16  // 接收环大小
+static struct rx_desc rx_ring[RX_RING_SIZE] __attribute__((aligned(16)));  // 接收描述符环
+static struct mbuf *rx_mbufs[RX_RING_SIZE];  // 接收mbuf缓冲区
 
-// remember where the e1000's registers live.
+// remember where the e1000's registers live.  // 记住e1000寄存器的位置
 static volatile uint32 *regs;
 
-struct spinlock e1000_lock;
+struct spinlock e1000_lock;  // e1000锁
 
-// called by pci_init().
-// xregs is the memory address at which the
-// e1000's registers are mapped.
+// called by pci_init().  // 由pci_init()调用
+// xregs is the memory address at which the  // xregs是e1000寄存器映射的内存地址
+// e1000's registers are mapped.  // e1000的寄存器映射位置
 void
 e1000_init(uint32 *xregs)
 {
@@ -96,13 +96,45 @@ int
 e1000_transmit(struct mbuf *m)
 {
   //
-  // Your code here.
+  // Your code here.  // 你的代码在这里
   //
-  // the mbuf contains an ethernet frame; program it into
-  // the TX descriptor ring so that the e1000 sends it. Stash
-  // a pointer so that it can be freed after sending.
+  // the mbuf contains an ethernet frame; program it into  // mbuf包含一个以太网帧；将其编程到
+  // the TX descriptor ring so that the e1000 sends it. Stash  // TX描述符环中，以便e1000发送它。存储
+  // a pointer so that it can be freed after sending.  // 一个指针，以便发送后可以释放
   //
-  
+  acquire(&e1000_lock);
+  //通过读取E1000_TDT控制寄存器，向E1000询问等待下一个数据包的TX环索引。
+  int idx =regs[E1000_TDT];
+
+  struct tx_desc *desc = &tx_ring[idx];
+  uint8 status = tx_ring[idx].status;
+  // 检查环是否溢出。如果E1000_TXD_STAT_DD未在E1000_TDT索引的描述符中设置，则E1000尚未完成先前相应的传输请求，因此返回错误。
+  if ((status & E1000_TXD_STAT_DD)==0)
+  {
+    release(&e1000_lock);
+    return -1;
+  }
+
+  // 否则，使用mbuffree()释放从该描述符传输的最后一个mbuf（如果有）。
+  if(tx_mbufs[idx])
+  {
+    mbuffree(tx_mbufs[idx]);
+    tx_mbufs[idx] = 0;
+  }
+
+  // 填写描述符。m->head指向内存中数据包的内容，m->len是数据包的长度。
+  // 设置必要的cmd标志（请参阅E1000手册的第3.3节），
+  // 并保存指向mbuf的指针，以便稍后释放。
+  desc->addr = (uint64) m->head;
+  desc->length = m->len;
+  desc->cmd = E1000_TXD_CMD_EOP | E1000_TXD_CMD_RS; // EOP: End of Packet, RS: Report Status
+
+  tx_mbufs[idx] = m;
+
+  // 通过将一加到E1000_TDT再对TX_RING_SIZE取模来更新环位置。
+  regs[E1000_TDT] = (idx + 1) % TX_RING_SIZE;
+  release(&e1000_lock);
+
   return 0;
 }
 
@@ -110,19 +142,47 @@ static void
 e1000_recv(void)
 {
   //
-  // Your code here.
+  // Your code here.  // 你的代码在这里
   //
-  // Check for packets that have arrived from the e1000
-  // Create and deliver an mbuf for each packet (using net_rx()).
+  // Check for packets that have arrived from the e1000  // 检查从e1000到达的数据包
+  // Create and deliver an mbuf for each packet (using net_rx()).  // 为每个数据包创建并传递mbuf（使用net_rx()）
   //
-}
+  // acquire(&e1000_lock);
+  int idx;
+  while(1)
+  {
+    // 1. 计算下一个要处理的描述符索引 (RDT指向已处理的，所以+1)
+    idx = (regs[E1000_RDT]+1)%RX_RING_SIZE;
+    //2 .检查该描述符是否有新数据
+    struct rx_desc *desc = &rx_ring[idx];
+    if((desc->status & E1000_RXD_STAT_DD)==0)
+    {
+      return;
+    }
+    // 否则，将mbuf的m->len更新为描述符中报告的长度。使用net_rx()将mbuf传送到网络栈。
+    struct mbuf *m = rx_mbufs[idx];
+    m->len = desc->length;
+
+    net_rx(m);
+
+    // 然后使用mbufalloc()分配一个新的mbuf，以替换刚刚给net_rx()的mbuf。将其数据指针（m->head）编程到描述符中。将描述符的状态位清除为零。
+    if ((rx_mbufs[idx]=mbufalloc(0)) == 0)
+    {
+       panic("e1000_recv: mbufalloc failed");
+    }
+    desc->addr = (uint64) rx_mbufs[idx]->head;
+    desc->status = 0;
+
+    regs[E1000_RDT] = idx;
+  }
+} 
 
 void
 e1000_intr(void)
 {
-  // tell the e1000 we've seen this interrupt;
-  // without this the e1000 won't raise any
-  // further interrupts.
+  // tell the e1000 we've seen this interrupt;  // 告诉e1000我们已经看到了这个中断；
+  // without this the e1000 won't raise any  // 没有这个，e1000不会引发任何
+  // further interrupts.  // 进一步的中断
   regs[E1000_ICR] = 0xffffffff;
 
   e1000_recv();
