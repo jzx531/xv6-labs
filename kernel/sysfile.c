@@ -52,6 +52,183 @@ fdalloc(struct file *f)
   return -1;
 }
 
+uint64 
+sys_mmap(void)
+{
+   uint64 addr;
+  int length;
+  int prot;
+  int flags;
+  int vfd;
+  struct file* vfile;
+  int offset;
+  uint64 err = 0xffffffffffffffff;
+
+  // 获取系统调用参数
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0 || argint(2, &prot) < 0 ||
+    argint(3, &flags) < 0 || argfd(4, &vfd, &vfile) < 0 || argint(5, &offset) < 0)
+    return err;
+
+  // 实验提示中假定addr和offset为0，简化程序可能发生的情况
+  if(addr != 0 || offset != 0 || length < 0)
+    return err;
+
+  //文件不可写时不允许拥有PROT_WRITE权限
+  if (vfile->writable == 0&&(prot & PROT_WRITE)!=0 && flags == MAP_SHARED)
+  {
+    return err;
+  }
+
+  struct proc* p = myproc();
+  //没有足够的虚拟空间
+  if(p->sz + length > MAXVA)
+  {
+    return err;
+  }
+
+  //查找未使用的vm_area
+  for (int i = 0; i < NVMA; i++)
+  {
+    if(p->vma[i].used == 0)
+    {
+      p->vma[i].used = 1;
+      p->vma[i].addr = p->sz;
+      p->vma[i].len = length;
+      p->vma[i].flags = flags;
+      p->vma[i].prot = prot;
+      p->vma[i].vfile = vfile;
+      p->vma[i].vfd = vfd;
+      p->vma[i].offset = offset;
+
+      filedup(p->vma[i].vfile);
+      p->sz+=length;
+      return p->vma[i].addr;
+    }
+  }
+  return err;
+
+}
+
+/**
+ * @brief mmap_handler 处理mmap惰性分配导致的页面错误
+ * @param va 页面故障虚拟地址
+ * @param cause 页面故障原因
+ * @return 0成功，-1失败
+ */
+int mmap_handler(int va, int cause)
+{
+  int i;
+  struct proc *p = myproc();
+  //根据地址查找是哪一个vma
+  for(i = 0; i < NVMA; i++){
+    if(p->vma[i].used && p->vma[i].addr <= va && p->vma[i].addr + p->vma[i].len-1 >= va)
+    {
+      break;
+    }
+  }
+  if(i == NVMA){
+    printf("mmap_handler: no vma found for va %x\n", va);
+    return -1;
+  }
+
+  int pte_flags = PTE_U;
+  if(p->vma[i].prot & PROT_READ) pte_flags |= PTE_R;
+  if(p->vma[i].prot & PROT_WRITE) pte_flags |= PTE_W;
+  if(p->vma[i].prot & PROT_EXEC) pte_flags |= PTE_X;
+
+  struct file* vf = p->vma[i].vfile;
+  // 读导致的页面错误,不可读导致错误
+  if(cause == 13 && vf->readable == 0) return -1;
+  // 写导致的页面错误,不可写导致错误
+  if(cause == 15 && vf->writable == 0) return -1;
+
+  void* pa = kalloc();
+  if (pa == 0)
+  {
+    return -1;
+  }
+  memset(pa, 0, PGSIZE);
+
+  //读取文件内容
+  ilock(vf->ip);
+  // 要按顺序读读取，例如内存页面A,B和文件块a,b
+  // 则A读取a，B读取b，而不能A读取b，B读取a
+  //offset通过找到va对应的页计算对应文件中的偏移量,如果va偏移超过一页,文件也要偏移一页的内容来对齐
+  int offset = p->vma[i].offset + PGROUNDDOWN(va - p->vma[i].addr);
+  // 从磁盘文件（vf->ip）中读取数据，拷贝到刚刚分配的物理页（pa）中。
+  int readbytes = readi(vf->ip,0,(uint64)pa,offset,PGSIZE);
+  if(readbytes == 0)
+  {
+    iunlock(vf->ip);
+    kfree(pa);
+    return -1;
+  }
+  iunlock(vf->ip);
+
+  //添加页面映射
+  if(mappages(p->pagetable,PGROUNDDOWN(va),PGSIZE,(uint64)pa,pte_flags)!=0)
+  {
+    kfree(pa);
+    return -1;
+  }
+
+  return 0;
+}
+
+uint64 
+sys_munmap(void)
+{
+  uint64 addr;
+  int length;
+  if(argaddr(0, &addr) < 0 || argint(1, &length) < 0)
+    return -1;
+
+  int i;
+  struct proc* p = myproc();
+  for(i=0;i<NVMA;i++){
+    if(p->vma[i].used && p->vma[i].len >= length)//先查找是否有长度大于等于length的vma
+    {
+      // munmap(addr, length)应删除指定地址范围内的mmap映射。如果进程修改了内存并将其映射为MAP_SHARED，则应首先将修改写入文件。munmap调用可能只覆盖mmap区域的一部分，但您可以认为它取消映射的位置要么在区域起始位置，要么在区域结束位置，要么就是整个区域(但不会在区域中间“打洞”)。
+      //解除在开头的addr
+      if(p->vma[i].addr == addr)
+      {
+        //找到了要删除的vma
+        p->vma[i].addr+=length;
+        p->vma[i].len-=length;
+        break;
+      }
+
+      // 2. 解除映射在 VMA 结束位置
+      if(addr + length == p->vma[i].addr + p->vma[i].len) {
+        p->vma[i].len -= length;
+        break;
+      }
+
+    }
+  }
+  if(i == NVMA)
+  {
+    return -1;
+  }
+
+  //将map_shared写回文件系统
+  if(p->vma[i].flags == MAP_SHARED && (p->vma[i].prot & PROT_WRITE))
+  {
+    filewrite(p->vma[i].vfile, (uint64)addr, length);
+  }
+  
+  uvmunmap(p->pagetable,addr,length/PGSIZE,1);
+
+  //如果当前VMA中所有地址都被取消
+  if(p->vma[i].len == 0)
+  {
+    fileclose(p->vma[i].vfile);
+    p->vma[i].used = 0;
+  }
+
+  return 0;
+}
+
 uint64
 sys_dup(void)
 {

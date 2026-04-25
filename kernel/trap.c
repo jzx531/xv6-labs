@@ -6,6 +6,7 @@
 #include "proc.h"
 #include "defs.h"
 
+
 struct spinlock tickslock;
 uint ticks;
 
@@ -29,6 +30,8 @@ trapinithart(void)
   w_stvec((uint64)kernelvec);
 }
 
+
+
 //
 // handle an interrupt, exception, or system call from user space.
 // called from trampoline.S
@@ -50,7 +53,8 @@ usertrap(void)
   // save user program counter.
   p->trapframe->epc = r_sepc();
   
-  if(r_scause() == 8){
+  uint64 cause = r_scause();
+  if(cause == 8){
     // system call
 
     if(p->killed)
@@ -67,7 +71,24 @@ usertrap(void)
     syscall();
   } else if((which_dev = devintr()) != 0){
     // ok
-  } else {
+  } 
+  else if(cause == 13 || cause == 15)
+  {
+    #ifdef LAB_MMAP
+      uint64 fault_va = r_stval();
+      if(PGROUNDUP(p->trapframe->sp)-1 < fault_va && fault_va < p->sz)
+      {
+        if(mmap_handler(r_stval(),cause)!= 0)
+        {
+          p->killed = 1;
+        }
+      }
+      else{
+        p->killed= 1;
+      }
+    #endif
+  }
+  else {
     printf("usertrap(): unexpected scause %p pid=%d\n", r_scause(), p->pid);
     printf("            sepc=%p stval=%p\n", r_sepc(), r_stval());
     p->killed = 1;
